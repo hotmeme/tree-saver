@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>禅の盆栽</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500&family=Noto+Serif+JP:wght@300;400&display=swap" rel="stylesheet" />
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <canvas id="scene" aria-label="Animated zen bonsai screensaver"></canvas>
+  <div id="sealSignature" class="seal-signature fallback" aria-label="Hanko placeholder signature">
+    <img src="./hanko-seal.png" alt="Hanko signature seal" onload="this.parentElement.classList.remove('fallback')" onerror="this.style.display='none'; this.parentElement.classList.add('fallback')" />
+    <span aria-hidden="true">印</span>
+  </div>
+
+  <div class="hud-hotspot" aria-hidden="true"></div>
+  <div id="hud" class="hud" aria-live="polite">
+    <button id="toggleRun" title="⏯ 再生/一時停止">⏸ 一時停止</button>
+    <button id="toggleAudio" title="♪ 音">♪ 音: 切</button>
+    <button id="toggleFullscreen" title="⛶ 全画面">⛶ 全画面</button>
+    <label>
+      速度
+      <input id="speed" type="range" min="0.3" max="2" step="0.1" value="1" />
+    </label>
+    <button id="restart" title="↺ リセット">↺ リセット</button>
+  </div>
+
+  <div id="intro" class="intro visible">
+    <div class="intro-card">
+      <h1>盆栽の息吹</h1>
+      <p>Breathe. Let the bonsai grow.</p>
+      <button id="startExperience">Start</button>
+      <small>Tip: move your cursor to the top-right for controls.</small>
+    </div>
+  </div>
+
+  <script src="./main.js"></script>
+</body>
+</html>

@@ -1,0 +1,193 @@
+:root {
+  --ink: #16110f;
+  --paper: #f4efe5;
+  --paper-deep: #dfd4c0;
+  --gold: #b88d3c;
+  --moss: #5b6c4e;
+  --mist: rgba(237, 245, 243, 0.28);
+  --hud-bg: rgba(22, 17, 15, 0.72);
+  --hud-border: rgba(233, 223, 201, 0.28);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: radial-gradient(120% 100% at 50% 100%, #e7ddca 0%, #eee7d8 35%, #cfc4ac 100%);
+  color: var(--ink);
+  font-family: "Cormorant Garamond", "Noto Serif JP", Georgia, serif;
+}
+
+#scene {
+  width: 100vw;
+  height: 100vh;
+  display: block;
+}
+
+.seal-signature {
+  position: fixed;
+  left: 1.25rem;
+  bottom: 1.15rem;
+  width: clamp(42px, 4.8vw, 66px);
+  height: clamp(42px, 4.8vw, 66px);
+  border-radius: 0.15rem;
+  z-index: 18;
+  box-shadow: 0 6px 16px rgba(48, 16, 12, 0.22);
+  border: 1px solid rgba(128, 28, 23, 0.24);
+  overflow: hidden;
+}
+
+.seal-signature img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.seal-signature span {
+  display: none;
+}
+
+.seal-signature.fallback {
+  background: linear-gradient(145deg, #c24436 0%, #a23028 65%, #8b261f 100%);
+}
+
+.seal-signature.fallback span {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  color: rgba(250, 229, 214, 0.95);
+  font-family: "Noto Serif JP", serif;
+  font-size: clamp(1.15rem, 2.2vw, 1.6rem);
+  letter-spacing: 0.02em;
+}
+
+.hud {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(130px, 1fr));
+  gap: 0.55rem;
+  padding: 0.75rem;
+  border: 1px solid var(--hud-border);
+  background: linear-gradient(135deg, rgba(40, 30, 24, 0.85), var(--hud-bg));
+  backdrop-filter: blur(10px);
+  border-radius: 0.85rem;
+  transform: translateY(-140%);
+  opacity: 0;
+  transition: transform 360ms ease, opacity 360ms ease;
+  z-index: 20;
+}
+
+.hud-hotspot {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 18rem;
+  height: 10rem;
+  z-index: 19;
+}
+
+.hud-hotspot:hover + .hud,
+.hud:hover,
+.hud:focus-within {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.hud button,
+.hud label {
+  background: rgba(241, 231, 212, 0.12);
+  color: #f3e9d7;
+  border: 1px solid rgba(246, 235, 214, 0.35);
+  border-radius: 0.5rem;
+  min-height: 2.2rem;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.95rem;
+  letter-spacing: 0.01em;
+  font-family: "Noto Serif JP", "Cormorant Garamond", serif;
+}
+
+.hud button {
+  cursor: pointer;
+}
+
+.hud button:hover {
+  background: rgba(241, 231, 212, 0.24);
+}
+
+.hud label {
+  grid-column: span 2;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.hud input[type="range"] {
+  width: 100%;
+  accent-color: var(--gold);
+}
+
+.intro {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, rgba(18, 14, 12, 0.56), rgba(36, 29, 24, 0.46));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 420ms ease;
+  z-index: 30;
+}
+
+.intro.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.intro-card {
+  width: min(560px, 86vw);
+  padding: 2rem 2.1rem;
+  border-radius: 1.2rem;
+  background: linear-gradient(160deg, rgba(243, 234, 216, 0.88), rgba(230, 217, 194, 0.76));
+  border: 1px solid rgba(87, 69, 42, 0.26);
+  box-shadow: 0 20px 60px rgba(30, 24, 20, 0.24);
+  text-align: center;
+}
+
+.intro-card h1 {
+  margin: 0 0 0.4rem;
+  font-family: "Noto Serif JP", serif;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  font-size: clamp(2rem, 4vw, 2.8rem);
+}
+
+.intro-card p {
+  margin: 0 0 1.4rem;
+  font-size: clamp(1.1rem, 2.5vw, 1.45rem);
+}
+
+.intro-card button {
+  border: 1px solid rgba(80, 58, 28, 0.35);
+  background: linear-gradient(120deg, #a9813c, #8c6a35);
+  color: #fcf7ec;
+  padding: 0.6rem 1.1rem;
+  border-radius: 999px;
+  font-family: "Noto Serif JP", serif;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.intro-card small {
+  display: block;
+  margin-top: 1rem;
+  color: rgba(34, 28, 24, 0.8);
+}

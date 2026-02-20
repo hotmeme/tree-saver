@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f1e8d5"/>
+      <stop offset="1" stop-color="#d9c8a8"/>
+    </linearGradient>
+    <linearGradient id="pot" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8a6846"/>
+      <stop offset="1" stop-color="#5f462f"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+  <ellipse cx="32" cy="50" rx="16" ry="3.5" fill="#443327" opacity="0.35"/>
+  <path d="M17 42h30l-3.6 10H20.6z" fill="url(#pot)"/>
+  <ellipse cx="32" cy="42" rx="12" ry="2.8" fill="#3f2f22"/>
+  <path d="M32 42c-1-7 1-14 0-21" stroke="#4e3a29" stroke-width="3.2" stroke-linecap="round" fill="none"/>
+  <path d="M32 28c-6-3-10-1-13 2" stroke="#4e3a29" stroke-width="2.4" stroke-linecap="round" fill="none"/>
+  <path d="M32 24c5-4 10-3 13 0" stroke="#4e3a29" stroke-width="2.4" stroke-linecap="round" fill="none"/>
+  <ellipse cx="19" cy="30" rx="4" ry="2.5" fill="#61774f"/>
+  <ellipse cx="45" cy="25" rx="4.2" ry="2.8" fill="#6b8258"/>
+</svg>
