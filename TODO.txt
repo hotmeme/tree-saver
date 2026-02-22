@@ -1,0 +1,4 @@
+Interactive components:
+Maybe snip branches. Let them fall to the floor and fade away. Regrow (denser?)
+Maybe play with wind.
+Maybe rake sand

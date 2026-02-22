@@ -124,6 +124,16 @@ body {
   background: rgba(241, 231, 212, 0.24);
 }
 
+#restart {
+  background: linear-gradient(145deg, rgba(151, 42, 34, 0.95), rgba(111, 29, 24, 0.95));
+  border-color: rgba(255, 188, 168, 0.45);
+  color: #fff2ea;
+}
+
+#restart:hover {
+  background: linear-gradient(145deg, rgba(174, 47, 38, 0.98), rgba(128, 33, 27, 0.98));
+}
+
 .hud label {
   grid-column: span 2;
   display: grid;

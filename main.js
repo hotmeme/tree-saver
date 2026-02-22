@@ -28,6 +28,21 @@ let motes = [];
 let sceneConfig = null;
 let pondRipples = [];
 let nextPondRippleAt = 0;
+let sceneSeed = null;
+let treeSeed = null;
+let particleSeed = null;
+let pointer = { x: -9999, y: -9999, px: -9999, py: -9999, vx: 0, vy: 0, active: false, lastMoveMs: 0 };
+let rustles = [];
+let lastWaterRippleMs = 0;
+let lastRustleMs = 0;
+let stoneStates = [];
+let draggedStoneIdx = -1;
+let stoneDragDX = 0;
+let stoneDragDY = 0;
+let lastDragX = 0;
+let lastDragY = 0;
+let lastRustleSfxMs = 0;
+let lastWaterSfxMs = 0;
 
 class SeededRandom {
   constructor(seed = 1) {
@@ -64,6 +79,241 @@ function quadPoint(p0, p1, p2, t) {
 
 function easeOutCubic(t) {
   return 1 - (1 - t) ** 3;
+}
+
+function distToSegmentSquared(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) {
+    const ex = px - x1;
+    const ey = py - y1;
+    return ex * ex + ey * ey;
+  }
+  const t = clamp(((px - x1) * dx + (py - y1) * dy) / len2, 0, 1);
+  const qx = x1 + t * dx;
+  const qy = y1 + t * dy;
+  const ex = px - qx;
+  const ey = py - qy;
+  return ex * ex + ey * ey;
+}
+
+function pointInPond(x, y) {
+  if (!sceneConfig) {
+    return false;
+  }
+  const pondX = width * sceneConfig.pondX;
+  const pondY = height * sceneConfig.pondY;
+  const rx = width * sceneConfig.pondW * 0.5;
+  const ry = height * sceneConfig.pondH * 0.5;
+  const rot = -0.18;
+  const cos = Math.cos(-rot);
+  const sin = Math.sin(-rot);
+  const dx = x - pondX;
+  const dy = y - pondY;
+  const lx = dx * cos - dy * sin;
+  const ly = dx * sin + dy * cos;
+  return (lx * lx) / (rx * rx) + (ly * ly) / (ry * ry) <= 1;
+}
+
+function getStoneRenderState(stone, idx) {
+  const st = stoneStates[idx] || { offsetX: 0, offsetY: 0, liftY: 0, dropVy: 0, dragging: false, tilt: 0 };
+  const cx = width * stone.x + st.offsetX;
+  const cy = height * stone.y + st.offsetY + st.liftY;
+  const s = Math.min(width, height) * 0.075 * stone.scale;
+  return { cx, cy, s, st };
+}
+
+function pickStoneAt(x, y) {
+  if (!sceneConfig || !sceneConfig.stones) {
+    return -1;
+  }
+  for (let i = sceneConfig.stones.length - 1; i >= 0; i -= 1) {
+    const stone = sceneConfig.stones[i];
+    const rs = getStoneRenderState(stone, i);
+    const dx = x - rs.cx;
+    const dy = y - rs.cy;
+    const c = Math.cos(-stone.rot);
+    const s = Math.sin(-stone.rot);
+    const lx = dx * c - dy * s;
+    const ly = dx * s + dy * c;
+    const rx = rs.s * 0.9;
+    const ry = rs.s * 0.5;
+    if ((lx * lx) / (rx * rx) + (ly * ly) / (ry * ry) <= 1) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function updateStoneDrag(clientX, clientY, vx = 0, vy = 0) {
+  if (draggedStoneIdx < 0 || !sceneConfig || !sceneConfig.stones[draggedStoneIdx]) {
+    return;
+  }
+  const stone = sceneConfig.stones[draggedStoneIdx];
+  const st = stoneStates[draggedStoneIdx];
+  const baseX = width * stone.x;
+  const baseY = height * stone.y;
+
+  const desiredX = clientX + stoneDragDX;
+  const desiredY = clientY + stoneDragDY;
+
+  st.offsetX = clamp(desiredX - baseX, -width * 0.28, width * 0.28);
+  st.offsetY = clamp(desiredY - baseY, -height * 0.14, height * 0.16);
+  st.liftY = -18;
+  st.dropVy = 0;
+  const rs = getStoneRenderState(stone, draggedStoneIdx);
+  const rx = clamp((clientX - rs.cx) / (rs.s * 0.85), -1, 1);
+  const vyInfluence = clamp(vx * 0.0017 - vy * 0.0012, -0.12, 0.12);
+  st.tilt = clamp(rx * 0.14 + vyInfluence, -0.2, 0.2);
+  st.dragging = true;
+}
+
+function releaseDraggedStone() {
+  if (draggedStoneIdx < 0) {
+    return;
+  }
+  const st = stoneStates[draggedStoneIdx];
+  st.dragging = false;
+  if (st.liftY > -8) {
+    st.liftY = -20;
+  }
+  st.dropVy = 30;
+  draggedStoneIdx = -1;
+}
+
+function updateStonePhysics(dtSec) {
+  const gravity = 1050;
+  for (const st of stoneStates) {
+    if (!st || st.dragging) {
+      continue;
+    }
+    st.tilt += (0 - st.tilt) * Math.min(1, dtSec * 10);
+    if (st.liftY < 0 || st.dropVy !== 0) {
+      st.dropVy += gravity * dtSec;
+      st.liftY += st.dropVy * dtSec;
+      if (st.liftY >= 0) {
+        st.liftY = 0;
+        if (st.dropVy > 120) {
+          ambient.playStoneDrop(clamp(st.dropVy / 900, 0.2, 1));
+        }
+        st.dropVy = 0;
+      }
+    }
+  }
+}
+
+function spawnWaterWake(x, y, vx, vy, speed) {
+  const nowSec = performance.now() * 0.001;
+  const mag = Math.max(0.25, Math.min(1.5, speed / 620));
+  const angle = Math.atan2(vy, vx || 0.0001);
+  const baseR = Math.min(width * sceneConfig.pondW, height * sceneConfig.pondH) * (0.12 + mag * 0.08);
+
+  pondRipples.push({
+    x,
+    y,
+    start: nowSec,
+    duration: 1.05 + mag * 0.95,
+    maxRadius: baseR,
+    wake: true,
+    angle,
+    stretch: 1.4 + mag * 1.6,
+    cross: 0.72,
+  });
+}
+
+function addTreeRustle(x, y, vx, vy, speed) {
+  const nowSec = performance.now() * 0.001;
+  const mag = Math.max(0.2, Math.min(0.9, speed / 950));
+  const len = Math.hypot(vx, vy) || 1;
+  rustles.push({
+    x,
+    y,
+    dx: vx / len,
+    dy: vy / len,
+    strength: mag,
+    radius: 26 + mag * 62,
+    start: nowSec,
+    duration: 0.38 + mag * 0.24,
+  });
+  if (rustles.length > 24) {
+    rustles.splice(0, rustles.length - 24);
+  }
+}
+
+function handlePointerMove(clientX, clientY) {
+  const nowMs = performance.now();
+  const hadPrev = pointer.active;
+  const px = hadPrev ? pointer.x : clientX;
+  const py = hadPrev ? pointer.y : clientY;
+  const vx = clientX - px;
+  const vy = clientY - py;
+  const speed = Math.hypot(vx, vy) * 60;
+
+  pointer = { x: clientX, y: clientY, px, py, vx, vy, active: true, lastMoveMs: nowMs };
+
+  if (sceneConfig && pointInPond(clientX, clientY) && speed > 70 && nowMs - lastWaterRippleMs > 46) {
+    spawnWaterWake(clientX, clientY, vx, vy, speed);
+    const tx = clientX - vx * 0.35;
+    const ty = clientY - vy * 0.35;
+    if (pointInPond(tx, ty)) {
+      spawnWaterWake(tx, ty, vx, vy, speed * 0.85);
+    }
+    if (ambient.enabled && nowMs - lastWaterSfxMs > 140) {
+      ambient.playWaterRipple(clamp(speed / 1400, 0.15, 0.7));
+      lastWaterSfxMs = nowMs;
+    }
+    lastWaterRippleMs = nowMs;
+  }
+
+  if (!tree || !tree.bounds || speed < 85 || nowMs - lastRustleMs < 58) {
+    return;
+  }
+
+  const b = tree.bounds;
+  const inBounds = clientX >= b.minX - 40 && clientX <= b.maxX + 40 && clientY >= b.minY - 40 && clientY <= b.maxY + 40;
+  if (!inBounds) {
+    return;
+  }
+
+  let nearBranch = false;
+  for (let i = 0; i < tree.branches.length; i += 1) {
+    const br = tree.branches[i];
+    if (distToSegmentSquared(clientX, clientY, br.x1, br.y1, br.x2, br.y2) < (18 + br.width * 2) ** 2) {
+      nearBranch = true;
+      break;
+    }
+  }
+
+  let nearLeaf = false;
+  if (!nearBranch) {
+    for (let i = 0; i < tree.leaves.length; i += 1) {
+      const lf = tree.leaves[i];
+      const dx = clientX - lf.x;
+      const dy = clientY - lf.y;
+      if (dx * dx + dy * dy < 26 * 26) {
+        nearLeaf = true;
+        break;
+      }
+    }
+    if (!nearLeaf) {
+      return;
+    }
+  }
+
+  addTreeRustle(clientX, clientY, vx, vy, speed);
+  if (ambient.enabled && nowMs - lastRustleSfxMs > 120) {
+    if (nearBranch) {
+      ambient.playRustle('branch', clamp(speed / 1200, 0.15, 0.65));
+    } else if (nearLeaf) {
+      ambient.playRustle('leaf', clamp(speed / 1200, 0.12, 0.5));
+    }
+    lastRustleSfxMs = nowMs;
+  }
+  if (nearBranch && clientY > tree.baseY - height * 0.22) {
+    addTreeRustle(tree.baseX, tree.baseY - height * 0.24, vx, vy, speed * 0.65);
+  }
+  lastRustleMs = nowMs;
 }
 
 function buildSceneConfig(seed) {
@@ -107,9 +357,22 @@ function resetPondRipples(nowSec = performance.now() * 0.001) {
 }
 
 function randomizeScene(seed = (Math.random() * 4294967295) >>> 0) {
-  sceneConfig = buildSceneConfig(seed);
-  tree = makeTree(seed ^ 0x9e3779b9);
-  resetParticles(seed ^ 0xa341316c);
+  sceneSeed = seed >>> 0;
+  treeSeed = sceneSeed ^ 0x9e3779b9;
+  particleSeed = sceneSeed ^ 0xa341316c;
+
+  sceneConfig = buildSceneConfig(sceneSeed);
+  tree = makeTree(treeSeed);
+  resetParticles(particleSeed);
+  stoneStates = (sceneConfig.stones || []).map(() => ({
+    offsetX: 0,
+    offsetY: 0,
+    liftY: 0,
+    dropVy: 0,
+    tilt: 0,
+    dragging: false,
+  }));
+  draggedStoneIdx = -1;
   resetPondRipples();
 }
 
@@ -237,7 +500,24 @@ function makeTree(seed = 20260220) {
   };
 
   spawnBranch(root);
-  return { branches, leaves, matureLeaves, baseX, baseY };
+  let minX = baseX;
+  let maxX = baseX;
+  let minY = baseY;
+  let maxY = baseY;
+  for (const br of branches) {
+    minX = Math.min(minX, br.x1, br.x2, br.cx);
+    maxX = Math.max(maxX, br.x1, br.x2, br.cx);
+    minY = Math.min(minY, br.y1, br.y2, br.cy);
+    maxY = Math.max(maxY, br.y1, br.y2, br.cy);
+  }
+  for (const lf of leaves) {
+    minX = Math.min(minX, lf.x);
+    maxX = Math.max(maxX, lf.x);
+    minY = Math.min(minY, lf.y);
+    maxY = Math.max(maxY, lf.y);
+  }
+
+  return { branches, leaves, matureLeaves, baseX, baseY, bounds: { minX, maxX, minY, maxY } };
 }
 
 function resetParticles(seed = 72211) {
@@ -264,6 +544,8 @@ function resetParticles(seed = 72211) {
 }
 
 function resize() {
+  const prevW = width;
+  const prevH = height;
   dpr = Math.min(2, window.devicePixelRatio || 1);
   width = Math.floor(window.innerWidth);
   height = Math.floor(window.innerHeight);
@@ -273,7 +555,40 @@ function resize() {
   canvas.style.height = `${height}px`;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  randomizeScene();
+  if (sceneSeed === null) {
+    randomizeScene();
+    return;
+  }
+
+  // Keep the exact procedural instance through fullscreen/resize.
+  sceneConfig = buildSceneConfig(sceneSeed);
+  tree = makeTree(treeSeed);
+
+  if (prevW > 0 && prevH > 0) {
+    const sx = width / prevW;
+    const sy = height / prevH;
+    const sr = (sx + sy) * 0.5;
+
+    for (const petal of petals) {
+      petal.x *= sx;
+      petal.y *= sy;
+    }
+    for (const mote of motes) {
+      mote.x *= sx;
+      mote.y *= sy;
+    }
+    for (const ripple of pondRipples) {
+      ripple.x *= sx;
+      ripple.y *= sy;
+      ripple.maxRadius *= sr;
+    }
+    for (const st of stoneStates) {
+      st.offsetX *= sx;
+      st.offsetY *= sy;
+      st.liftY *= sy;
+      st.dropVy *= sy;
+    }
+  }
 }
 
 function drawBackground(t) {
@@ -401,17 +716,36 @@ function drawBackground(t) {
 
     const radius = 3 + ripple.maxRadius * age;
     const alpha = (1 - age) * (1 - age) * 0.42;
-    ctx.strokeStyle = `rgba(236, 249, 255, ${alpha})`;
-    ctx.lineWidth = 1.8 - age * 0.8;
-    ctx.beginPath();
-    ctx.arc(ripple.x, ripple.y, radius, 0, Math.PI * 2);
-    ctx.stroke();
 
-    ctx.strokeStyle = `rgba(190, 225, 242, ${alpha * 0.6})`;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(ripple.x, ripple.y, radius * 0.6, 0, Math.PI * 2);
-    ctx.stroke();
+    if (ripple.wake) {
+      const rx = radius * (ripple.stretch || 1.8);
+      const ry = Math.max(2.6, radius * (ripple.cross || 0.7));
+      const rot = ripple.angle || 0;
+
+      ctx.strokeStyle = `rgba(236, 249, 255, ${alpha})`;
+      ctx.lineWidth = 1.7 - age * 0.7;
+      ctx.beginPath();
+      ctx.ellipse(ripple.x, ripple.y, rx, ry, rot, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.strokeStyle = `rgba(190, 225, 242, ${alpha * 0.58})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(ripple.x, ripple.y, rx * 0.62, ry * 0.62, rot, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      ctx.strokeStyle = `rgba(236, 249, 255, ${alpha})`;
+      ctx.lineWidth = 1.8 - age * 0.8;
+      ctx.beginPath();
+      ctx.arc(ripple.x, ripple.y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.strokeStyle = `rgba(190, 225, 242, ${alpha * 0.6})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(ripple.x, ripple.y, radius * 0.6, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }
   pondRipples = activeRipples;
   ctx.restore();
@@ -422,13 +756,16 @@ function drawBackground(t) {
   ctx.ellipse(pondX, pondY, pondW * 0.5, pondH * 0.5, -0.18, 0, Math.PI * 2);
   ctx.stroke();
 
-  for (const stone of sceneConfig.stones) {
-    const sx = width * stone.x;
-    const sy = height * stone.y;
-    const s = Math.min(width, height) * 0.075 * stone.scale;
+  for (let idx = 0; idx < sceneConfig.stones.length; idx += 1) {
+    const stone = sceneConfig.stones[idx];
+    const rs = getStoneRenderState(stone, idx);
+    const sx = rs.cx;
+    const sy = rs.cy;
+    const s = rs.s;
+    const st = rs.st;
     ctx.save();
     ctx.translate(sx, sy);
-    ctx.rotate(stone.rot);
+    ctx.rotate(stone.rot + (st.tilt || 0));
 
     ctx.fillStyle = 'rgba(52, 45, 39, 0.2)';
     ctx.beginPath();
@@ -548,10 +885,31 @@ function drawBranch(branch, p, t) {
 
   const tGrow = easeOutCubic(local);
   const sway = Math.sin(t * 0.8 + branch.depth * 0.65 + branch.x1 * 0.01) * (1.2 + branch.depth * 0.1);
+  const mx = (branch.x1 + branch.x2) * 0.5;
+  const my = (branch.y1 + branch.y2) * 0.5;
+  let rustleX = 0;
+  let rustleY = 0;
+  for (const r of rustles) {
+    const age = (t - r.start) / r.duration;
+    if (age < 0 || age > 1) {
+      continue;
+    }
+    const dx = mx - r.x;
+    const dy = my - r.y;
+    const d2 = dx * dx + dy * dy;
+    const rad2 = r.radius * r.radius;
+    if (d2 > rad2) {
+      continue;
+    }
+    const decay = (1 - age) ** 3;
+    const falloff = (1 - d2 / rad2) * decay;
+    rustleX += r.dx * r.strength * 2.2 * falloff;
+    rustleY += r.dy * r.strength * 1.4 * falloff;
+  }
 
   const p0 = { x: branch.x1, y: branch.y1 };
-  const p1 = { x: branch.cx + sway * 0.35, y: branch.cy };
-  const p2 = { x: branch.x2 + sway, y: branch.y2 };
+  const p1 = { x: branch.cx + sway * 0.35 + rustleX * 0.3, y: branch.cy + rustleY * 0.2 };
+  const p2 = { x: branch.x2 + sway + rustleX, y: branch.y2 + rustleY };
 
   const segments = 24;
   const drawTo = Math.max(2, Math.floor(segments * tGrow));
@@ -629,12 +987,31 @@ function drawLeaves(progress, t, matureBoost) {
   function drawLeaf(leaf, bloom, alphaScale = 1) {
     const swayX = Math.sin(t * 1.25 * leaf.sway + leaf.x * 0.04) * 2.6;
     const swayY = Math.cos(t * 1.05 * leaf.sway + leaf.y * 0.03) * 1.2;
+    let rustleX = 0;
+    let rustleY = 0;
+    for (const r of rustles) {
+      const age = (t - r.start) / r.duration;
+      if (age < 0 || age > 1) {
+        continue;
+      }
+      const dx = leaf.x - r.x;
+      const dy = leaf.y - r.y;
+      const d2 = dx * dx + dy * dy;
+      const rad2 = r.radius * r.radius;
+      if (d2 > rad2) {
+        continue;
+      }
+      const decay = (1 - age) ** 3;
+      const falloff = (1 - d2 / rad2) * decay;
+      rustleX += r.dx * r.strength * 3.2 * falloff;
+      rustleY += r.dy * r.strength * 2.1 * falloff;
+    }
     const size = leaf.size * bloom;
     const blossom = leaf.blossom;
 
     ctx.save();
-    ctx.translate(leaf.x + swayX, leaf.y + swayY);
-    ctx.rotate(leaf.tone * Math.PI * 1.8 + t * 0.05);
+    ctx.translate(leaf.x + swayX + rustleX, leaf.y + swayY + rustleY);
+    ctx.rotate(leaf.tone * Math.PI * 1.8 + t * 0.05 + rustleX * 0.0045);
 
     if (blossom) {
       ctx.fillStyle = `rgba(247, 216, 222, ${0.85 * alphaScale})`;
@@ -775,8 +1152,11 @@ function getMatureBoost(now) {
 function render(now) {
   const dt = Math.min(64, now - lastFrame);
   lastFrame = now;
+  const dtSec = dt * 0.001;
 
   const t = now * 0.001;
+  rustles = rustles.filter((r) => t - r.start <= r.duration);
+  updateStonePhysics(dtSec);
   const progress = getLoopProgress(now);
   const matureBoost = getMatureBoost(now);
 
@@ -831,6 +1211,10 @@ class AmbientAudio {
     this.chimeTimer = null;
     // Jazz-leaning Japanese color: D insen-inspired set with tasteful extensions.
     this.chimeScale = [293.66, 311.13, 392.0, 440.0, 523.25, 587.33, 698.46];
+  }
+
+  canPlaySfx() {
+    return this.enabled && this.ctx && this.master;
   }
 
   async init() {
@@ -916,6 +1300,222 @@ class AmbientAudio {
     this.master.gain.linearRampToValueAtTime(this.enabled ? 0.28 : 0, t + 1.2);
     ui.toggleAudio.textContent = this.enabled ? '♪ 音: 入' : '♪ 音: 切';
   }
+
+  playRustle(kind = 'leaf', intensity = 0.4) {
+    if (!this.canPlaySfx()) {
+      return;
+    }
+    const now = this.ctx.currentTime;
+    if (kind === 'branch') {
+      // Distinct bark/timber touch: noise-only woody friction (non-tonal).
+      const scrape = this.ctx.createBufferSource();
+      const scrapeHP = this.ctx.createBiquadFilter();
+      const scrapeBP = this.ctx.createBiquadFilter();
+      const scrapeGain = this.ctx.createGain();
+      const pan = this.ctx.createStereoPanner();
+
+      scrape.buffer = this.noiseSource?.buffer || null;
+      if (!scrape.buffer) {
+        return;
+      }
+      scrape.loop = false;
+
+      scrapeHP.type = 'highpass';
+      scrapeHP.frequency.value = 90;
+      scrapeBP.type = 'bandpass';
+      scrapeBP.frequency.value = 380 + intensity * 180;
+      scrapeBP.Q.value = 0.9;
+
+      scrapeGain.gain.setValueAtTime(0.0001, now);
+      scrapeGain.gain.exponentialRampToValueAtTime(0.026 + intensity * 0.018, now + 0.012);
+      scrapeGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28 + intensity * 0.2);
+      pan.pan.value = (Math.random() * 2 - 1) * 0.28;
+
+      scrape.connect(scrapeHP);
+      scrapeHP.connect(scrapeBP);
+      scrapeBP.connect(pan);
+      pan.connect(scrapeGain);
+      scrapeGain.connect(this.master);
+
+      scrape.start(now);
+      scrape.stop(now + 0.3);
+      return;
+    }
+
+    // Leaf whisper: brighter, softer, airy.
+    const src = this.ctx.createBufferSource();
+    const gain = this.ctx.createGain();
+    const hp = this.ctx.createBiquadFilter();
+    const bp = this.ctx.createBiquadFilter();
+    const pan = this.ctx.createStereoPanner();
+    src.buffer = this.noiseSource?.buffer || null;
+    if (!src.buffer) {
+      return;
+    }
+    src.loop = false;
+    hp.type = 'highpass';
+    hp.frequency.value = 920 + intensity * 650;
+    bp.type = 'bandpass';
+    bp.frequency.value = 1700 + intensity * 900;
+    bp.Q.value = 0.72;
+    pan.pan.value = (Math.random() * 2 - 1) * 0.32;
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.012 + intensity * 0.01, now + 0.014);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.17 + intensity * 0.15);
+    src.connect(hp);
+    hp.connect(bp);
+    bp.connect(pan);
+    pan.connect(gain);
+    gain.connect(this.master);
+    src.start(now);
+    src.stop(now + 0.26);
+  }
+
+  playStonePick() {
+    if (!this.canPlaySfx()) {
+      return;
+    }
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    const pan = this.ctx.createStereoPanner();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(182, now);
+    osc.frequency.exponentialRampToValueAtTime(240, now + 0.08);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.02, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+    pan.pan.value = (Math.random() * 2 - 1) * 0.24;
+    osc.connect(pan);
+    pan.connect(gain);
+    gain.connect(this.master);
+    osc.start(now);
+    osc.stop(now + 0.14);
+  }
+
+  playStoneDrop(intensity = 0.6) {
+    if (!this.canPlaySfx()) {
+      return;
+    }
+    const now = this.ctx.currentTime;
+    const body = this.ctx.createOscillator();
+    const bodyGain = this.ctx.createGain();
+    const sand = this.ctx.createBufferSource();
+    const sandFilter = this.ctx.createBiquadFilter();
+    const sandGain = this.ctx.createGain();
+    const pan = this.ctx.createStereoPanner();
+
+    body.type = 'sine';
+    body.frequency.setValueAtTime(120 + intensity * 40, now);
+    body.frequency.exponentialRampToValueAtTime(62, now + 0.14);
+    bodyGain.gain.setValueAtTime(0.0001, now);
+    bodyGain.gain.exponentialRampToValueAtTime(0.035 + intensity * 0.025, now + 0.01);
+    bodyGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+
+    sand.buffer = this.noiseSource?.buffer || null;
+    if (!sand.buffer) {
+      return;
+    }
+    sand.loop = false;
+    sandFilter.type = 'bandpass';
+    sandFilter.frequency.value = 540 + intensity * 260;
+    sandFilter.Q.value = 0.7;
+    sandGain.gain.setValueAtTime(0.0001, now);
+    sandGain.gain.exponentialRampToValueAtTime(0.022 + intensity * 0.012, now + 0.004);
+    sandGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+    pan.pan.value = (Math.random() * 2 - 1) * 0.2;
+
+    body.connect(pan);
+    pan.connect(bodyGain);
+    bodyGain.connect(this.master);
+
+    sand.connect(sandFilter);
+    sandFilter.connect(pan);
+    pan.connect(sandGain);
+    sandGain.connect(this.master);
+
+    body.start(now);
+    body.stop(now + 0.24);
+    sand.start(now);
+    sand.stop(now + 0.2);
+  }
+
+  playWaterRipple(intensity = 0.35) {
+    if (!this.canPlaySfx()) {
+      return;
+    }
+    const now = this.ctx.currentTime;
+    const src = this.ctx.createBufferSource();
+    const hp = this.ctx.createBiquadFilter();
+    const lp = this.ctx.createBiquadFilter();
+    const noiseGain = this.ctx.createGain();
+    const pan = this.ctx.createStereoPanner();
+    const ring = this.ctx.createOscillator();
+    const ringGain = this.ctx.createGain();
+    const plop = this.ctx.createOscillator();
+    const plopLP = this.ctx.createBiquadFilter();
+    const plopGain = this.ctx.createGain();
+
+    src.buffer = this.noiseSource?.buffer || null;
+    if (!src.buffer) {
+      return;
+    }
+    src.loop = false;
+
+    // Wet tail: low, soft splash noise.
+    hp.type = 'highpass';
+    hp.frequency.value = 110;
+    lp.type = 'lowpass';
+    lp.frequency.value = 760 + intensity * 280;
+    lp.Q.value = 0.45;
+
+    // Low ripple body (avoid sharp "pew").
+    ring.type = 'sine';
+    ring.frequency.setValueAtTime(260 + intensity * 80, now);
+    ring.frequency.exponentialRampToValueAtTime(155 + intensity * 55, now + 0.22);
+
+    // Soft plop transient.
+    plop.type = 'triangle';
+    plop.frequency.setValueAtTime(150 + intensity * 38, now);
+    plop.frequency.exponentialRampToValueAtTime(88 + intensity * 26, now + 0.12);
+    plopLP.type = 'lowpass';
+    plopLP.frequency.value = 420 + intensity * 160;
+
+    plopGain.gain.setValueAtTime(0.0001, now);
+    plopGain.gain.exponentialRampToValueAtTime(0.008 + intensity * 0.008, now + 0.02);
+    plopGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+
+    ringGain.gain.setValueAtTime(0.0001, now);
+    ringGain.gain.exponentialRampToValueAtTime(0.0055 + intensity * 0.0055, now + 0.03);
+    ringGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.26 + intensity * 0.14);
+    pan.pan.value = (Math.random() * 2 - 1) * 0.28;
+
+    noiseGain.gain.setValueAtTime(0.0001, now);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0045 + intensity * 0.0045, now + 0.016);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16 + intensity * 0.08);
+
+    src.connect(hp);
+    hp.connect(lp);
+    lp.connect(pan);
+    pan.connect(noiseGain);
+    noiseGain.connect(this.master);
+
+    ring.connect(pan);
+    pan.connect(ringGain);
+    ringGain.connect(this.master);
+
+    plop.connect(plopLP);
+    plopLP.connect(pan);
+    pan.connect(plopGain);
+    plopGain.connect(this.master);
+
+    src.start(now);
+    src.stop(now + 0.22);
+    ring.start(now);
+    ring.stop(now + 0.3);
+    plop.start(now);
+    plop.stop(now + 0.18);
+  }
 }
 
 const ambient = new AmbientAudio();
@@ -971,6 +1571,45 @@ ui.restart.addEventListener('click', () => {
 });
 
 window.addEventListener('resize', resize, { passive: true });
+window.addEventListener('mousemove', (ev) => {
+  if (draggedStoneIdx >= 0) {
+    const vx = ev.clientX - lastDragX;
+    const vy = ev.clientY - lastDragY;
+    updateStoneDrag(ev.clientX, ev.clientY, vx, vy);
+    lastDragX = ev.clientX;
+    lastDragY = ev.clientY;
+    return;
+  }
+  handlePointerMove(ev.clientX, ev.clientY);
+}, { passive: true });
+window.addEventListener('mousedown', (ev) => {
+  if (ev.button !== 0) {
+    return;
+  }
+  if (ev.target instanceof Element && (ev.target.closest('#hud') || ev.target.closest('#intro'))) {
+    return;
+  }
+  const idx = pickStoneAt(ev.clientX, ev.clientY);
+  if (idx < 0) {
+    return;
+  }
+  draggedStoneIdx = idx;
+  const stone = sceneConfig.stones[idx];
+  const rs = getStoneRenderState(stone, idx);
+  stoneDragDX = rs.cx - ev.clientX;
+  stoneDragDY = rs.cy - ev.clientY;
+  lastDragX = ev.clientX;
+  lastDragY = ev.clientY;
+  updateStoneDrag(ev.clientX, ev.clientY, 0, 0);
+  ambient.playStonePick();
+});
+window.addEventListener('mouseup', () => {
+  releaseDraggedStone();
+});
+window.addEventListener('mouseleave', () => {
+  pointer.active = false;
+  releaseDraggedStone();
+});
 window.addEventListener('keydown', (ev) => {
   if (ev.code === 'Space') {
     ev.preventDefault();
