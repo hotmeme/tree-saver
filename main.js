@@ -269,6 +269,8 @@ function handlePointerMove(clientX, clientY) {
   if (!tree || !tree.bounds || speed < 85 || nowMs - lastRustleMs < 58) {
     return;
   }
+  const progress = getLoopProgress(nowMs);
+  const matureBoost = getMatureBoost(nowMs);
 
   const b = tree.bounds;
   const inBounds = clientX >= b.minX - 40 && clientX <= b.maxX + 40 && clientY >= b.minY - 40 && clientY <= b.maxY + 40;
@@ -279,7 +281,29 @@ function handlePointerMove(clientX, clientY) {
   let nearBranch = false;
   for (let i = 0; i < tree.branches.length; i += 1) {
     const br = tree.branches[i];
-    if (distToSegmentSquared(clientX, clientY, br.x1, br.y1, br.x2, br.y2) < (18 + br.width * 2) ** 2) {
+    const local = clamp((progress - br.start) / (br.end - br.start || 1), 0, 1);
+    if (local <= 0) {
+      continue;
+    }
+
+    const tGrow = easeOutCubic(local);
+    const p0 = { x: br.x1, y: br.y1 };
+    const p1 = { x: br.cx, y: br.cy };
+    const p2 = { x: br.x2, y: br.y2 };
+    const samples = Math.max(2, Math.floor(18 * tGrow));
+    const hitRadius2 = (18 + br.width * 2) ** 2;
+    let prev = p0;
+    let hit = false;
+    for (let s = 1; s <= samples; s += 1) {
+      const tt = (s / samples) * tGrow;
+      const curr = quadPoint(p0, p1, p2, tt);
+      if (distToSegmentSquared(clientX, clientY, prev.x, prev.y, curr.x, curr.y) < hitRadius2) {
+        hit = true;
+        break;
+      }
+      prev = curr;
+    }
+    if (hit) {
       nearBranch = true;
       break;
     }
@@ -289,11 +313,30 @@ function handlePointerMove(clientX, clientY) {
   if (!nearBranch) {
     for (let i = 0; i < tree.leaves.length; i += 1) {
       const lf = tree.leaves[i];
+      const local = clamp((progress - lf.appear) / 0.2, 0, 1);
+      if (local <= 0) {
+        continue;
+      }
       const dx = clientX - lf.x;
       const dy = clientY - lf.y;
       if (dx * dx + dy * dy < 26 * 26) {
         nearLeaf = true;
         break;
+      }
+    }
+    if (!nearLeaf) {
+      for (let i = 0; i < tree.matureLeaves.length; i += 1) {
+        const lf = tree.matureLeaves[i];
+        const local = clamp((matureBoost - lf.delay) / 0.45, 0, 1);
+        if (local <= 0) {
+          continue;
+        }
+        const dx = clientX - lf.x;
+        const dy = clientY - lf.y;
+        if (dx * dx + dy * dy < 24 * 24) {
+          nearLeaf = true;
+          break;
+        }
       }
     }
     if (!nearLeaf) {
@@ -1327,7 +1370,7 @@ class AmbientAudio {
       scrapeBP.Q.value = 0.9;
 
       scrapeGain.gain.setValueAtTime(0.0001, now);
-      scrapeGain.gain.exponentialRampToValueAtTime(0.026 + intensity * 0.018, now + 0.012);
+      scrapeGain.gain.exponentialRampToValueAtTime(0.086 + intensity * 0.058, now + 0.012);
       scrapeGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28 + intensity * 0.2);
       pan.pan.value = (Math.random() * 2 - 1) * 0.28;
 
@@ -1360,7 +1403,7 @@ class AmbientAudio {
     bp.Q.value = 0.72;
     pan.pan.value = (Math.random() * 2 - 1) * 0.32;
     gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(0.012 + intensity * 0.01, now + 0.014);
+    gain.gain.linearRampToValueAtTime(0.08 + intensity * 0.064, now + 0.014);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.17 + intensity * 0.15);
     src.connect(hp);
     hp.connect(bp);
@@ -1383,7 +1426,7 @@ class AmbientAudio {
     osc.frequency.setValueAtTime(182, now);
     osc.frequency.exponentialRampToValueAtTime(240, now + 0.08);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.02, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.07, now + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
     pan.pan.value = (Math.random() * 2 - 1) * 0.24;
     osc.connect(pan);
@@ -1409,7 +1452,7 @@ class AmbientAudio {
     body.frequency.setValueAtTime(120 + intensity * 40, now);
     body.frequency.exponentialRampToValueAtTime(62, now + 0.14);
     bodyGain.gain.setValueAtTime(0.0001, now);
-    bodyGain.gain.exponentialRampToValueAtTime(0.035 + intensity * 0.025, now + 0.01);
+    bodyGain.gain.exponentialRampToValueAtTime(0.12 + intensity * 0.084, now + 0.01);
     bodyGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
 
     sand.buffer = this.noiseSource?.buffer || null;
@@ -1421,7 +1464,7 @@ class AmbientAudio {
     sandFilter.frequency.value = 540 + intensity * 260;
     sandFilter.Q.value = 0.7;
     sandGain.gain.setValueAtTime(0.0001, now);
-    sandGain.gain.exponentialRampToValueAtTime(0.022 + intensity * 0.012, now + 0.004);
+    sandGain.gain.exponentialRampToValueAtTime(0.078 + intensity * 0.044, now + 0.004);
     sandGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
     pan.pan.value = (Math.random() * 2 - 1) * 0.2;
 
@@ -1482,16 +1525,16 @@ class AmbientAudio {
     plopLP.frequency.value = 420 + intensity * 160;
 
     plopGain.gain.setValueAtTime(0.0001, now);
-    plopGain.gain.exponentialRampToValueAtTime(0.008 + intensity * 0.008, now + 0.02);
+    plopGain.gain.exponentialRampToValueAtTime(0.03 + intensity * 0.028, now + 0.02);
     plopGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
 
     ringGain.gain.setValueAtTime(0.0001, now);
-    ringGain.gain.exponentialRampToValueAtTime(0.0055 + intensity * 0.0055, now + 0.03);
+    ringGain.gain.exponentialRampToValueAtTime(0.02 + intensity * 0.02, now + 0.03);
     ringGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.26 + intensity * 0.14);
     pan.pan.value = (Math.random() * 2 - 1) * 0.28;
 
     noiseGain.gain.setValueAtTime(0.0001, now);
-    noiseGain.gain.exponentialRampToValueAtTime(0.0045 + intensity * 0.0045, now + 0.016);
+    noiseGain.gain.exponentialRampToValueAtTime(0.016 + intensity * 0.016, now + 0.016);
     noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16 + intensity * 0.08);
 
     src.connect(hp);

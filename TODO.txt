@@ -2,3 +2,8 @@ Interactive components:
 Maybe snip branches. Let them fall to the floor and fade away. Regrow (denser?)
 Maybe play with wind.
 Maybe rake sand
+Random small events:
+fish jumping out of water
+bird landing on tree for a moment then flying away
+wind blowing and rustling the leaves
+
